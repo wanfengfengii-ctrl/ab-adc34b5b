@@ -1,0 +1,39 @@
+# Single-service deployment for the backend-only cell indexing API.
+#
+# Host port is configurable:  HOST_PORT=9000 docker compose up --build
+services:
+  api:
+    build: .
+    image: cell-indexer:latest
+    ports:
+      # Host side defaults to 8080 and is overridable via HOST_PORT.
+      - "${HOST_PORT:-8080}:8080"
+    environment:
+      # Override in real deployments; the default is development only.
+      APP_CERTIFICATE_SECRET: "${APP_CERTIFICATE_SECRET:-development-only-secret-change-me}"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import json,urllib.request,sys; r=urllib.request.urlopen('http://127.0.0.1:8080/health',timeout=3); sys.exit(0 if json.load(r)['status']=='ok' else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # One-shot acceptance entry point against the real API.  It builds the
+  # image, waits for the API health check to pass, runs the acceptance
+  # suite over HTTP, and exits with the suite's status code.
+  #
+  # Run:  docker compose --profile acceptance up --build acceptance
+  acceptance:
+    profiles: ["acceptance"]
+    image: cell-indexer:latest
+    build: .
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      ACCEPTANCE_BASE_URL: "http://api:8080"
+      APP_CERTIFICATE_SECRET: "${APP_CERTIFICATE_SECRET:-development-only-secret-change-me}"
+    entrypoint: ["python", "-m", "app.acceptance"]
+    command: ["--base-url", "http://api:8080"]
+    restart: "no"
